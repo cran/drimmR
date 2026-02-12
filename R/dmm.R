@@ -91,7 +91,7 @@
 #'
 #' @return An object of class \code{dmm}
 #' @export
-#' @import future doParallel seqinr foreach
+#' @import parallelly doParallel seqinr foreach
 #' @importFrom Rdpack reprompt
 #' @references
 #' \insertRef{BaVe2018}{drimmR}
@@ -115,13 +115,10 @@ fitdmm <- function(sequences, order, degree, states,  init.estim = c("mle", "fre
 
   # if ncpu is -1, we use all available cores
   if(ncpu==-1){
-    ncpu = future::availableCores()
+    ncpu = parallelly::availableCores()
   }
 
   # sum counts of the sequences of the same length
-
-  if(fit.method=="sum"){
-
 
   ############################
   # Test input sequences
@@ -202,35 +199,60 @@ fitdmm <- function(sequences, order, degree, states,  init.estim = c("mle", "fre
   doParallel::registerDoParallel(cl)
   # Get all order mers + 1 positions
 
-  output <- foreach(i=seq(from = 1, to = length(mers), by = length(states)),.packages = c("doParallel"), .combine = "c") %dopar% {
-    R<-NULL
-    M<-NULL
+  output <- foreach(i=seq(from = 1, to = length(mers), by = length(states)),.packages = c("doParallel"), .combine = "c") %do% {
+    if(fit.method=="sum"){
+      R<-NULL
+      M<-NULL
+      ## Get Result and Coefficient matrices for each sequence
+      foreach(s=listS, .combine = "c") %do% {
+        
+        pos <- lapply(mers[i:(i + length(states) - 1)], .get_pos, sequence = s,
+                      size = order + 1)
 
-    ## Get Result and Coefficient matrices for each sequence
+        # Calculate Result matrix
+        R_s <- .result_matrix(pos, degree, pCoef, model.length)
+        colnames(R_s) <- states
+        if(is.null(R)) R <- R_s
+        else R <- R + R_s
 
-    foreach(s=listS, .combine = "c") %do% {
+        # Calculate Coeff matrix
+        M_s <- .coef_matrix(pos, degree, pCoef, model.length)
+        rm(pos)
 
-      pos <- lapply(mers[i:(i + length(states) - 1)], .get_pos, sequence = s,
-                    size = order + 1)
-
-      # Calculate Result matrix
-      R_s <- .result_matrix(pos, degree, pCoef, model.length)
-      colnames(R_s) <- states
-      if(is.null(R)) R <- R_s
-      else R <- R + R_s
-
-      # Calculate Coeff matrix
-      M_s <- .coef_matrix(pos, degree, pCoef, model.length)
-      rm(pos)
-
-      if(is.null(M)) M <- M_s
-      else M <- M + M_s
-
+        if(is.null(M)) M <- M_s
+        else M <- M + M_s
+      }
+      # Calculate result probabilities
+      X <- solve(M, R)
+      X <- .correct(X, degree, states)
     }
-    # Calculate result probabilities
-    X <- solve(M, R)
-    X <- .correct(X, degree, states)
-
+    if(fit.method=="mean"){
+      # List to store X the solution for each sequence
+      X_list <- list()
+      print(length(X_list))
+      foreach(s=listS, .combine = "c") %do% {
+        ## Get Result and Coefficient matrices for each sequence
+        pos <- lapply(mers[i:(i + length(states) - 1)], .get_pos, sequence = s,
+                      size = order + 1)
+        model.length<-length(s)-1
+        
+        # Calculate Result matrix
+        R <- .result_matrix(pos, degree, pCoef, model.length)
+        colnames(R) <- states
+        
+        # Calculate Coeff matrix
+        M <- .coef_matrix(pos, degree, pCoef, model.length)
+        rm(pos)
+        # Calculate result probabilities
+        X_s <- solve(M, R)
+        X_s <- .correct(X_s, degree, states)
+        if(length(X_list) == 0) X_list <- X_s
+        else X_list <- X_list + X_s
+      }
+      # Calculer la moyenne des solutions X_s
+      X <- X_list / length(listS)
+    }
+    return(X)
   }
 
 
@@ -315,9 +337,6 @@ fitdmm <- function(sequences, order, degree, states,  init.estim = c("mle", "fre
   }
 
 
-}
-
-
 
 
 
@@ -390,7 +409,7 @@ getTransitionMatrix.dmm <- function(x, pos) {
 #' @author Alexandre Seiller
 
 #' @return A vector or matrix of stationary law probabilities
-#' @import doParallel future
+#' @import doParallel parallelly
 #' @importFrom Rdpack reprompt
 #' @references
 #' \insertRef{BaVe2018}{drimmR}
@@ -409,7 +428,7 @@ getStationaryLaw.dmm <- function(x, pos, all.pos=FALSE, internal=FALSE, ncpu=2){
 
   # if ncpu is -1, we use all available cores
   if(ncpu==-1){
-    ncpu = future::availableCores()
+    ncpu = parallelly::availableCores()
   }
 
   seq.from <- Vectorize(seq.default, vectorize.args = c("from"))
@@ -533,7 +552,7 @@ getStationaryLaw.dmm <- function(x, pos, all.pos=FALSE, internal=FALSE, ncpu=2){
 #' @author Alexandre Seiller
 #'
 #' @return A vector or matrix of distribution probabilities
-#' @import doParallel future
+#' @import doParallel parallelly
 #' @importFrom Rdpack reprompt
 #' @references
 #' \insertRef{BaVe2018}{drimmR}
@@ -552,7 +571,7 @@ getDistribution.dmm <- function(x, pos, all.pos=FALSE, internal=FALSE, ncpu=2){
 
   # if ncpu is -1, we use all available cores
   if(ncpu==-1){
-    ncpu = future::availableCores()
+    ncpu = parallelly::availableCores()
   }
 
   seq.from <- Vectorize(seq.default, vectorize.args = c("from"))
@@ -698,7 +717,7 @@ getDistribution.dmm <- function(x, pos, all.pos=FALSE, internal=FALSE, ncpu=2){
 #'
 #' @return A list of log-likelihood (numeric)
 #' @export
-#' @import parallel future
+#' @import parallel parallelly
 #' @importFrom Rdpack reprompt
 #' @references
 #' \insertRef{BaVe2018}{drimmR}
@@ -720,7 +739,7 @@ loglik.dmm <- function(x, sequences, ncpu=2){
 
   # if ncpu is -1, we use all available cores
   if(ncpu==-1){
-    ncpu = future::availableCores()
+    ncpu = parallelly::availableCores()
   }
 
   if(class(sequences) %in% c("matrix","array")) stop("The parameter 'sequences' should be a list of character vector(s), not a string of character, matrix or array")
@@ -947,7 +966,7 @@ simulate.dmm <- function(x, output_file=NULL, model_size=NULL, ncpu=2) {
 
   # if ncpu is -1, we use all available cores
   if(ncpu==-1){
-    ncpu = future::availableCores()
+    ncpu = parallelly::availableCores()
   }
 
   if(is.null(model_size)){

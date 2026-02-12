@@ -53,7 +53,7 @@
 
   seq.from <- Vectorize(seq.default, vectorize.args = c("from","to"))
   temp <- as.vector(seq.from(from = c(1:c(d+1)), to = length(mat), by =c(d+1)))
-  res <- abs(mat[temp])
+  res <- pmax(mat[temp],0)
 
   normfunc <- function(vect_tm, n) {
     l_vect_tm = length(vect_tm)
